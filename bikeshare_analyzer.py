@@ -96,7 +96,7 @@ class BikeShareAnalyzer:
         
         city = self._get_validated_input(
             "Enter city name or number: ",
-            self.CITY_DATA.keys(),
+            list(self.CITY_DATA.keys()),
             allow_numbers=True
         )
         
@@ -168,6 +168,7 @@ class BikeShareAnalyzer:
         Returns:
             pd.DataFrame: Filtered dataframe
         """
+        file_path = None
         try:
             print(f"📊 Loading data for {filters.city.title()}...")
             start_time = time.time()
@@ -175,24 +176,23 @@ class BikeShareAnalyzer:
             # Load data with optimized dtypes
             file_path = self.data_dir / self.CITY_DATA[filters.city]
             
-            # Optimize data types for better performance
-            dtype_dict = {
-                'Start Station': 'category',
-                'End Station': 'category',
-                'User Type': 'category'
-            }
+            # Load data first, then optimize data types for better performance
+            df = pd.read_csv(file_path)
             
-            df = pd.read_csv(file_path, dtype=dtype_dict)
+            # Convert to categorical data types if columns exist
+            for col in [self.COL_START_STATION, self.COL_END_STATION, self.COL_USER_TYPE]:
+                if col in df.columns:
+                    df[col] = df[col].astype('category')
             
             # Convert datetime with better error handling
-            df['Start Time'] = pd.to_datetime(df['Start Time'], errors='coerce')
-            df = df.dropna(subset=['Start Time'])  # Remove invalid dates
+            df[self.COL_START_TIME] = pd.to_datetime(df[self.COL_START_TIME], errors='coerce')
+            df = df.dropna(subset=[self.COL_START_TIME])  # Remove invalid dates
             
             # Create additional time-based features
-            df['month'] = df['Start Time'].dt.month
-            df['day_of_week'] = df['Start Time'].dt.day_name()
-            df['hour'] = df['Start Time'].dt.hour
-            df['date'] = df['Start Time'].dt.date
+            df['month'] = df[self.COL_START_TIME].dt.month
+            df['day_of_week'] = df[self.COL_START_TIME].dt.day_name()
+            df['hour'] = df[self.COL_START_TIME].dt.hour
+            df['date'] = df[self.COL_START_TIME].dt.date
             
             # Apply filters efficiently
             if filters.month != 'all':
@@ -229,14 +229,14 @@ class BikeShareAnalyzer:
         start_time = time.time()
         
         # Most common month
-        if self.filters.month == 'all':
+        if self.filters and self.filters.month == 'all':
             common_month = self.df['month'].mode()[0]
             month_name = self.MONTHS[common_month] if common_month <= len(self.MONTHS) else 'Unknown'
             month_count = (self.df['month'] == common_month).sum()
             print(f"📅 Most popular month: {month_name.title()} ({month_count:,} trips)")
         
         # Most common day
-        if self.filters.day == 'all':
+        if self.filters and self.filters.day == 'all':
             common_day = self.df['day_of_week'].mode()[0]
             day_count = (self.df['day_of_week'] == common_day).sum()
             print(f"📆 Most popular day: {common_day} ({day_count:,} trips)")
@@ -265,27 +265,27 @@ class BikeShareAnalyzer:
         start_time = time.time()
         
         # Most popular start station
-        start_station = self.df['Start Station'].mode()[0]
-        start_count = (self.df['Start Station'] == start_station).sum()
+        start_station = self.df[self.COL_START_STATION].mode()[0]
+        start_count = (self.df[self.COL_START_STATION] == start_station).sum()
         print(f"🚀 Most popular start station: {start_station}")
         print(f"   └─ {start_count:,} trips started here")
         
         # Most popular end station
-        end_station = self.df['End Station'].mode()[0]
-        end_count = (self.df['End Station'] == end_station).sum()
+        end_station = self.df[self.COL_END_STATION].mode()[0]
+        end_count = (self.df[self.COL_END_STATION] == end_station).sum()
         print(f"🏁 Most popular end station: {end_station}")
         print(f"   └─ {end_count:,} trips ended here")
         
         # Most common trip route
-        self.df['route'] = self.df['Start Station'] + ' → ' + self.df['End Station']
+        self.df['route'] = self.df[self.COL_START_STATION].astype(str) + ' → ' + self.df[self.COL_END_STATION].astype(str)
         common_route = self.df['route'].mode()[0]
         route_count = (self.df['route'] == common_route).sum()
         print(f"🛣️  Most popular route: {common_route}")
         print(f"   └─ {route_count:,} trips on this route")
         
         # Additional station insights
-        unique_start = self.df['Start Station'].nunique()
-        unique_end = self.df['End Station'].nunique()
+        unique_start = self.df[self.COL_START_STATION].nunique()
+        unique_end = self.df[self.COL_END_STATION].nunique()
         print(f"📊 Total unique start stations: {unique_start}")
         print(f"📊 Total unique end stations: {unique_end}")
         
@@ -294,7 +294,7 @@ class BikeShareAnalyzer:
     
     def analyze_trip_duration(self) -> None:
         """Enhanced trip duration analysis with statistical insights."""
-        if self.df is None or len(self.df) == 0 or 'Trip Duration' not in self.df.columns:
+        if self.df is None or len(self.df) == 0 or self.COL_TRIP_DURATION not in self.df.columns:
             print("\n⚠️  Trip duration data not available")
             return
             
@@ -302,8 +302,8 @@ class BikeShareAnalyzer:
         print('=' * 50)
         start_time = time.time()
         
-        duration_stats = self.df['Trip Duration'].describe()
-        total_time = self.df['Trip Duration'].sum()
+        duration_stats = self.df[self.COL_TRIP_DURATION].describe()
+        total_time = self.df[self.COL_TRIP_DURATION].sum()
         
         # Convert seconds to readable format
         def format_duration(seconds):
@@ -326,9 +326,9 @@ class BikeShareAnalyzer:
         print(f"📊 Longest trip: {format_duration(duration_stats['max'])}")
         
         # Trip duration categories
-        short_trips = len(self.df[self.df['Trip Duration'] <= 600])  # ≤ 10 minutes
-        medium_trips = len(self.df[self.df['Trip Duration'].between(601, 1800)])  # 10-30 minutes
-        long_trips = len(self.df[self.df['Trip Duration'] > 1800])  # > 30 minutes
+        short_trips = len(self.df[self.df[self.COL_TRIP_DURATION] <= 600])  # ≤ 10 minutes
+        medium_trips = len(self.df[self.df[self.COL_TRIP_DURATION].between(601, 1800)])  # 10-30 minutes
+        long_trips = len(self.df[self.df[self.COL_TRIP_DURATION] > 1800])  # > 30 minutes
         
         print(f"🚴 Short trips (≤10 min): {short_trips:,} ({short_trips/len(self.df)*100:.1f}%)")
         print(f"🚴 Medium trips (10-30 min): {medium_trips:,} ({medium_trips/len(self.df)*100:.1f}%)")
@@ -347,16 +347,16 @@ class BikeShareAnalyzer:
         start_time = time.time()
         
         # User type analysis
-        if 'User Type' in self.df.columns:
-            user_types = self.df['User Type'].value_counts()
+        if self.COL_USER_TYPE in self.df.columns:
+            user_types = self.df[self.COL_USER_TYPE].value_counts()
             print("📋 User Type Distribution:")
             for user_type, count in user_types.items():
                 percentage = count / len(self.df) * 100
                 print(f"   {user_type}: {count:,} ({percentage:.1f}%)")
         
         # Gender analysis
-        if 'Gender' in self.df.columns:
-            gender_counts = self.df['Gender'].value_counts()
+        if self.COL_GENDER in self.df.columns:
+            gender_counts = self.df[self.COL_GENDER].value_counts()
             print("\n⚥ Gender Distribution:")
             for gender, count in gender_counts.items():
                 percentage = count / len(self.df) * 100
@@ -365,10 +365,10 @@ class BikeShareAnalyzer:
             print("\n⚠️  Gender data not available for this city")
         
         # Birth year analysis
-        if 'Birth Year' in self.df.columns:
-            birth_years = self.df['Birth Year'].dropna()
+        if self.COL_BIRTH_YEAR in self.df.columns:
+            birth_years = self.df[self.COL_BIRTH_YEAR].dropna()
             if not birth_years.empty:
-                print(f"\n🎂 Birth Year Statistics:")
+                print("\n🎂 Birth Year Statistics:")
                 print(f"   Earliest: {int(birth_years.min())}")
                 print(f"   Most recent: {int(birth_years.max())}")
                 print(f"   Most common: {int(birth_years.mode()[0])}")
@@ -421,8 +421,8 @@ class BikeShareAnalyzer:
             print(f"📊 Weekday trips: {weekday_trips:,} ({weekday_trips/len(self.df)*100:.1f}%)")
         
         # Station efficiency (trips per station)
-        if 'Start Station' in self.df.columns:
-            station_efficiency = self.df.groupby('Start Station').size()
+        if self.COL_START_STATION in self.df.columns:
+            station_efficiency = self.df.groupby(self.COL_START_STATION).size()
             avg_trips_per_station = station_efficiency.mean()
             print(f"📊 Average trips per station: {avg_trips_per_station:.1f}")
             
@@ -444,10 +444,11 @@ class BikeShareAnalyzer:
         print('=' * 50)
         
         print(f"🔢 Total trips analyzed: {len(self.df):,}")
-        print(f"📅 Date range: {self.df['Start Time'].min().date()} to {self.df['Start Time'].max().date()}")
-        print(f"🏙️  City: {self.filters.city.title()}")
-        print(f"📅 Month filter: {self.filters.month.title()}")
-        print(f"📆 Day filter: {self.filters.day.title()}")
+        print(f"📅 Date range: {self.df[self.COL_START_TIME].min().date()} to {self.df[self.COL_START_TIME].max().date()}")
+        if self.filters:
+            print(f"🏙️  City: {self.filters.city.title()}")
+            print(f"📅 Month filter: {self.filters.month.title()}")
+            print(f"📆 Day filter: {self.filters.day.title()}")
         print(f"💾 Memory usage: {self.df.memory_usage(deep=True).sum() / 1024**2:.1f} MB")
         
         print('-' * 50)
